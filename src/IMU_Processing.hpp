@@ -163,7 +163,7 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf &kf_state, in
   
   init_state.bg  = mean_gyr;      //角速度测量作为陀螺仪偏差
   init_state.offset_T_L_I = Lidar_T_wrt_IMU;      //将lidar和imu外参传入
-  init_state.offset_R_L_I = Sophus::SO3(Lidar_R_wrt_IMU);
+  init_state.offset_R_L_I = MySO3(Lidar_R_wrt_IMU);
   kf_state.change_x(init_state);      //将初始化后的状态传入esekfom.hpp中的x_
 
   Matrix<double, 24, 24> init_P = MatrixXd::Identity(24,24);      //在esekfom.hpp获得P_的协方差矩阵
@@ -288,7 +288,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf &kf_state
 
       /*    P_compensate = R_imu_e ^ T * (R_i * P_i + T_ei)    */
 
-      M3D R_i(R_imu * Sophus::SO3::exp(angvel_avr * dt).matrix() );   //点it_pcl所在时刻的旋转：前一帧的IMU旋转矩阵 * exp(后一帧角速度*dt)   
+      M3D R_i(R_imu * MySO3::exp(angvel_avr * dt).matrix() );   //点it_pcl所在时刻的旋转：前一帧的IMU旋转矩阵 * exp(后一帧角速度*dt)   
       
       V3D P_i(it_pcl->x, it_pcl->y, it_pcl->z);   //点所在时刻的位置(雷达坐标系下)
       V3D T_ei(pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt - imu_state.pos);   //从点所在的世界位置-雷达末尾世界位置

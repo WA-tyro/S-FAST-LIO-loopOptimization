@@ -10,16 +10,18 @@
 #include <Eigen/Sparse>
 
 #include "common_lib.h"
-#include "sophus/so3.h"
+#include "sophus/so3.hpp"
 
 //该hpp主要包含：状态变量x，输入量u的定义，以及正向传播中相关矩阵的函数
+
+typedef Sophus::SO3<double> MySO3;
 
 //24维的状态量x
 struct state_ikfom
 {
 	Eigen::Vector3d pos = Eigen::Vector3d(0,0,0);
-	Sophus::SO3 rot = Sophus::SO3(Eigen::Matrix3d::Identity());
-	Sophus::SO3 offset_R_L_I = Sophus::SO3(Eigen::Matrix3d::Identity());
+	MySO3 rot = MySO3(Eigen::Matrix3d::Identity());
+	MySO3 offset_R_L_I = MySO3(Eigen::Matrix3d::Identity());
 	Eigen::Vector3d offset_T_L_I = Eigen::Vector3d(0,0,0);
 	Eigen::Vector3d vel = Eigen::Vector3d(0,0,0);
 	Eigen::Vector3d bg = Eigen::Vector3d(0,0,0);
@@ -73,7 +75,7 @@ Eigen::Matrix<double, 24, 24> df_dx(state_ikfom s, input_ikfom in)
 	cov.block<3, 3>(0, 12) = Eigen::Matrix3d::Identity();	//对应公式(7)第2行第3列   I
 	Eigen::Vector3d acc_ = in.acc - s.ba;   	//测量加速度 = a_m - bias	
 
-	cov.block<3, 3>(12, 3) = -s.rot.matrix() * Sophus::SO3::hat(acc_);		//对应公式(7)第3行第1列
+	cov.block<3, 3>(12, 3) = -s.rot.matrix() * MySO3::hat(acc_);		//对应公式(7)第3行第1列
 	cov.block<3, 3>(12, 18) = -s.rot.matrix(); 				//对应公式(7)第3行第5列 
 
 	cov.template block<3, 3>(12, 21) = Eigen::Matrix3d::Identity();		//对应公式(7)第3行第6列   I
