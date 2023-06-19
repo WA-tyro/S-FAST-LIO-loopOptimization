@@ -1,4 +1,13 @@
 # S-FAST_LIO
+
+## 添加回环优化部分
+1. 构建关键帧（完成）
+2. 将关键帧添加到因子图中（完成）
+3. 检测回环优化(完成)
+4. 回环优化后对姿态和局部地图进行重新矫正
+
+
+
 ## Simplified Implementation of FAST_LIO
 
 S-FAST_LIO is a simplified implementation of FAST_LIO (Xu, Wei, et al. "Fast-lio2: Fast direct lidar-inertial odometry."), which is modified from [FAST_LIO](https://github.com/hku-mars/FAST_LIO). This code is clean and accessible. It is a reference material for SLAM beginners.The main modifications are as follows:

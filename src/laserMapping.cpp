@@ -24,6 +24,7 @@
 #include <ikd-Tree/ikd_Tree.h>
 
 #include "IMU_Processing.hpp"
+#include "LoopOptimization.hpp"
 
 #define INIT_TIME           (0.1)
 #define LASER_POINT_COV     (0.001)
@@ -54,6 +55,10 @@ int    feats_down_size = 0, NUM_MAX_ITERATIONS = 0, pcd_save_interval = -1, pcd_
 
 bool   lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
 bool   scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
+
+// 六维分别对应 roll pitch yaw x y z
+float transformTobeMapped[6]; // 当前帧的姿态，用于构建关键帧
+float transformTobeMapped_optimized[6]; // 优化后的姿态
 
 vector<BoxPointType> cub_needrm;
 vector<PointVector>  Nearest_Points; 
@@ -528,6 +533,16 @@ void publish_path(const ros::Publisher pubPath)
     }
 }
 
+// 从状态量中获得关键帧的位置和姿态
+void get_pose6D(state_ikfom state_input, float *transform_output){
+    Eigen::Vector3d rpy = state_input.rot.unit_quaternion().toRotationMatrix().eulerAngles(0, 1, 2);
+    transform_output[0] = rpy[0];  // roll
+    transform_output[1] = rpy[1];  // pitch
+    transform_output[2] = rpy[2];  // yaw
+    transform_output[3] = state_input.pos[0];
+    transform_output[4] = state_input.pos[1];
+    transform_output[5] = state_input.pos[2];
+}
 
 int main(int argc, char** argv)
 {
@@ -583,6 +598,8 @@ int main(int argc, char** argv)
     ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>("/Laser_map", 100000);
     ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> ("/Odometry", 100000);
     ros::Publisher pubPath          = nh.advertise<nav_msgs::Path> ("/path", 100000);
+    ros::Publisher pubLaserKeyFrameGlobal = nh.advertise<nav_msgs::Odometry> ("/KeyFrame/odometry", 1); // 发布可视化
+    ros::Publisher pubLoopConstraintEdge = nh.advertise<visualization_msgs::MarkerArray>("/KeyFrame/loop_closure_constraints", 1); // 回环边可视化
 
     downSizeFilterSurf.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min);
     downSizeFilterMap.setLeafSize(filter_size_map_min, filter_size_map_min, filter_size_map_min);
@@ -596,6 +613,10 @@ int main(int argc, char** argv)
 
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);
+
+    LoopOptimization loop_opt(pubLoopConstraintEdge);
+
+    std::thread loopthread(&LoopOptimization::loopClosureThread, &loop_opt);
 
     while (ros::ok())
     {
@@ -670,6 +691,41 @@ int main(int argc, char** argv)
             state_point = kf.get_x();
             pos_lid = state_point.pos + state_point.rot.matrix() * state_point.offset_T_L_I;
 
+            static int KeyFrameNumber = 0;
+            get_pose6D(state_point, transformTobeMapped);
+            if(loop_opt.saveKeyFrame(feats_down_body, transformTobeMapped) == true){
+                KeyFrameNumber++;
+                std::cout << "Add new key frame!  " << KeyFrameNumber << std::endl;
+                loop_opt.addOdomFactor(feats_down_body, transformTobeMapped, Measures.lidar_end_time);
+                loop_opt.addLoopFactor(); // 添加回环优化因子
+                loop_opt.optimization();
+                loop_opt.gtsamClear();
+                // 回环优化后对姿态和局部地图进行重新矫正
+                // loop_opt.correctPoses();
+                
+                // 然后重新发布一下整体的姿态，并且调整x状态量，以便进行之后的滤波
+                
+                loop_opt.getCurrpose(transformTobeMapped_optimized); // 得到优化后的姿态
+
+                // 发布关键帧进行可视化
+                loop_opt.publish_KeyFrame(pubLaserKeyFrameGlobal, Measures.lidar_end_time, "camera_init");
+            }
+            // 先修改当前状态
+            // Eigen::AngleAxisd roll_rotation(transformTobeMapped_optimized[0], Eigen::Vector3d::UnitX());
+            // Eigen::AngleAxisd pitch_rotation(transformTobeMapped_optimized[1], Eigen::Vector3d::UnitY());
+            // Eigen::AngleAxisd yaw_rotation(transformTobeMapped_optimized[2], Eigen::Vector3d::UnitZ());
+            // Eigen::Quaterniond temp_q = yaw_rotation * pitch_rotation * roll_rotation;
+            // state_point.rot.setQuaternion(temp_q);
+            // state_point.pos.x() = transformTobeMapped_optimized[3];
+            // state_point.pos.y() = transformTobeMapped_optimized[4];
+            // state_point.pos.z() = transformTobeMapped_optimized[5];
+            // kf.change_x(state_point); // 应该是基本没有变化（线进行可视化看，是不是进行了回环优化）
+
+
+            if(loop_opt.transformTobeMapped_update_flag_){ // 进行了回环更新了，需要重新发布一下状态进行可视化
+                
+            }
+
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped);
 
@@ -678,7 +734,7 @@ int main(int argc, char** argv)
             map_incremental();
             
             /******* Publish points *******/
-            if (path_en)                         publish_path(pubPath);
+            if (path_en)                         publish_path(pubPath); // 这个发布的就是路径，需要更新这个
             if (scan_pub_en || pcd_save_en)      publish_frame_world(pubLaserCloudFull);
             if (scan_pub_en && scan_body_pub_en) publish_frame_body(pubLaserCloudFull_body);
             // publish_map(pubLaserCloudMap);
@@ -690,6 +746,7 @@ int main(int argc, char** argv)
         rate.sleep();
     }
 
+    loopthread.join();
     /**************** save map ****************/
     /* 1. make sure you have enough memories
     /* 2. pcd save will largely influence the real-time performences **/

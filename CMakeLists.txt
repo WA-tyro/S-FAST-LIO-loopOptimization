@@ -53,6 +53,8 @@ find_package(catkin REQUIRED COMPONENTS
   eigen_conversions
 )
 
+find_package( GTSAMCMakeTools )
+find_package(GTSAM REQUIRED QUIET)
 find_package(Eigen3 REQUIRED)
 find_package(PCL 1.8 REQUIRED)
 find_package( Sophus REQUIRED )
@@ -65,6 +67,7 @@ include_directories(
   ${PCL_INCLUDE_DIRS}
   ${PYTHON_INCLUDE_DIRS}
   ${Sophus_INCLUDE_DIRS}
+  ${GTSAM_INCLUDE_DIR}
   include)
 
 add_message_files(
@@ -79,10 +82,10 @@ generate_messages(
 
 catkin_package(
   CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime
-  DEPENDS EIGEN3 PCL
+  DEPENDS EIGEN3 PCL GTSAM
   INCLUDE_DIRS
 )
 
 add_executable(fastlio_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp)
-target_link_libraries(fastlio_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} ${Sophus_LIBRARIES} fmt)
+target_link_libraries(fastlio_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} ${Sophus_LIBRARIES} fmt gtsam)
 target_include_directories(fastlio_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
