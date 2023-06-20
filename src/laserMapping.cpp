@@ -581,15 +581,20 @@ void traverseKDTree_and_transform(KD_TREE<PointType>::KD_TREE_NODE* node) {
 }
 
 
-// 从状态量中获得关键帧的位置和姿态
+// 从状态量中获得关键帧的位置和姿态(忘记考虑外参了)
 void get_pose6D(state_ikfom state_input, float *transform_output){
-    Eigen::Vector3d rpy = state_input.rot.unit_quaternion().toRotationMatrix().eulerAngles(0, 1, 2);
+    Eigen::Vector3d temp_pos_lid = state_input.pos + state_input.rot.matrix() * state_input.offset_T_L_I; // 雷达的真实位置
+    MySO3 worldRotation = state_input.rot * state_input.offset_R_L_I.inverse(); // 雷达的真实姿态
+    Eigen::Vector3d rpy = worldRotation.unit_quaternion().toRotationMatrix().eulerAngles(0, 1, 2);
     transform_output[0] = rpy[0];  // roll
     transform_output[1] = rpy[1];  // pitch
     transform_output[2] = rpy[2];  // yaw
-    transform_output[3] = state_input.pos[0];
-    transform_output[4] = state_input.pos[1];
-    transform_output[5] = state_input.pos[2];
+    // transform_output[3] = state_input.pos[0];
+    // transform_output[4] = state_input.pos[1];
+    // transform_output[5] = state_input.pos[2];
+    transform_output[3] = temp_pos_lid[0];
+    transform_output[4] = temp_pos_lid[1];
+    transform_output[5] = temp_pos_lid[2];
 }
 
 int main(int argc, char** argv)
@@ -728,7 +733,7 @@ int main(int argc, char** argv)
                 continue;
             }
             
-            if(0) // If you need to see map point, change to "if(1)"
+            if(1) // If you need to see map point, change to "if(1)"
             {
                 PointVector ().swap(ikdtree.PCL_Storage);
                 ikdtree.flatten(ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD);
@@ -796,8 +801,8 @@ int main(int argc, char** argv)
                     Eigen::Affine3f transformTobeMapped_Affine3f =  loop_opt.trans2Affine3f(transformTobeMapped);
                     Eigen::Affine3f transformTobeMapped_optimized_Affine3f =  loop_opt.trans2Affine3f(transformTobeMapped_optimized);
                     // 计算两个变换之间的变换（从旧到新的变换）
-                    resultTransform = transformTobeMapped_optimized_Affine3f.inverse() * transformTobeMapped_Affine3f;
-                    traverseKDTree_and_transform(ikdtree.Root_Node);
+                    resultTransform = transformTobeMapped_Affine3f.inverse() * transformTobeMapped_optimized_Affine3f;
+                    traverseKDTree_and_transform(ikdtree.Root_Node); // 这里修改有问题出现，因为这里的局部地图是一直累计的，和LIO-SAM不同
                     std::cout << "ikdtree.size is :" << ikdtree.size() << std::endl;
                     
                     // 然后对当前帧的所有点进行变换
@@ -820,7 +825,7 @@ int main(int argc, char** argv)
             if (path_en)                         publish_path(pubPath); // 这个发布的就是路径，需要更新这个
             if (scan_pub_en || pcd_save_en)      publish_frame_world(pubLaserCloudFull);
             if (scan_pub_en && scan_body_pub_en) publish_frame_body(pubLaserCloudFull_body);
-            // publish_map(pubLaserCloudMap);
+            publish_map(pubLaserCloudMap);
 
             double t11 = omp_get_wtime();
             // std::cout << "feats_down_size: " <<  feats_down_size << "  Whole mapping time(ms):  " << (t11 - t00)*1000 << std::endl<< std::endl;

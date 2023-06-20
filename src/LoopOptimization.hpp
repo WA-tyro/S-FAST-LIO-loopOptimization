@@ -10,7 +10,8 @@
  * 1. 构建关键帧（完成）
  * 2. 将关键帧添加到因子图中（完成）
  * 3. 检测回环优化(完成)
- * 4. 回环优化后对姿态和局部地图进行重新矫正
+ * 4. 回环优化后对姿态和局部地图进行重新矫正(完成)
+ * 修bug：里程计一直抖动的问题，暂时没有解决
  */
 #include <ros/ros.h> // 用于发布关键帧可视化
 #include <nav_msgs/Odometry.h>
@@ -71,6 +72,8 @@ public:
     int   surroundingKeyframeSize_;
     float historyKeyframeSearchRadius_;
     float historyKeyframeSearchTimeDiff_;
+    float repeatKeyframeSearchTimeDiff_;
+    double lastLoopKeyframeTime_;
     int   historyKeyframeSearchNum_;
     float historyKeyframeFitnessScore_;
     string odometryFrame_;
@@ -146,11 +149,15 @@ LoopOptimization::LoopOptimization(const ros::Publisher & pubLoopConstraint)
 
     downSizeFilterICP.setLeafSize(0.4, 0.4, 0.4);
 
-    historyKeyframeFitnessScore_ = 0.3;
+    historyKeyframeFitnessScore_ = 0.17;
 
     pubLoopConstraintEdge_ = pubLoopConstraint;
 
     transformTobeMapped_update_flag_ = false;
+
+    repeatKeyframeSearchTimeDiff_ = 5.0;
+
+    lastLoopKeyframeTime_ = -1.0;
     std::cout << "LoopOptimization init succeed!" << std::endl;
 }
 
@@ -304,6 +311,9 @@ void LoopOptimization::loopClosureThread()
         *copy_cloudKeyPoses3D_ = *cloudKeyPoses3D_; // 取出位置点
         mtxLoopInfo.unlock();
 
+        // rviz展示闭环边
+        visualizeLoopClosure();
+
         // 当前关键帧索引，候选闭环匹配帧索引
         int loopKeyCur;
         int loopKeyPre;
@@ -336,9 +346,11 @@ void LoopOptimization::loopClosureThread()
         icp.align(*unused_result);
 
         // 未收敛，或者匹配不够好
-        if (icp.hasConverged() == false || icp.getFitnessScore() > historyKeyframeFitnessScore_)
+        if (icp.hasConverged() == false || icp.getFitnessScore() > historyKeyframeFitnessScore_){
+            std::cout <<  "\033[1;31m" << "fail ! Score is : "  << "\033[0m" << icp.getFitnessScore() <<  std::endl;
             continue;
-        std::cout <<  "\033[1;31m" << "the loop is useful ! the Score is : "  << "\033[0m" << icp.getFitnessScore() <<  std::endl;
+        }
+        std::cout <<  "\033[1;31m" << "the loop is success ! the Score is : "  << "\033[0m" << icp.getFitnessScore() <<  std::endl;
 
         // 发布当前关键帧经过闭环优化后的位姿变换之后的特征点云
 
@@ -370,9 +382,8 @@ void LoopOptimization::loopClosureThread()
         mtxLoopInfo.unlock();
 
         loopIndexContainer_[loopKeyCur] = loopKeyPre;
-
-        // rviz展示闭环边
-        visualizeLoopClosure();
+        lastLoopKeyframeTime_ = copy_cloudKeyPoses3D_->points[loopKeyCur].normal_x; // 回环检测成功，就重置时间
+        
     }
 }
 
@@ -460,6 +471,13 @@ bool LoopOptimization::detectLoopClosureDistance(int *latestID, int *closestID){
 
     *latestID = loopKeyCur;
     *closestID = loopKeyPre;
+
+    // 不要在段时间内多次进行回环优化
+    if(abs(copy_cloudKeyPoses3D_->points[loopKeyCur].normal_x - lastLoopKeyframeTime_) > repeatKeyframeSearchTimeDiff_){
+        return true;
+    } else {
+        return false;
+    }
 
     return true;
 }
