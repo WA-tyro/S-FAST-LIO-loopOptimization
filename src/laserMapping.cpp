@@ -89,9 +89,13 @@ esekfom::esekf kf;
 state_ikfom state_point;
 Eigen::Vector3d pos_lid;  //估计的W系下的位置
 
+Eigen::Affine3f resultTransform; // 在回环优化后当前更新的姿态和原先姿态的变换
+
 nav_msgs::Path path;
+nav_msgs::Path KeyFrame_path;
 nav_msgs::Odometry odomAftMapped;
 geometry_msgs::PoseStamped msg_body_pose;
+geometry_msgs::PoseStamped msg_KeyFrame_body_pose;
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
 
@@ -533,6 +537,50 @@ void publish_path(const ros::Publisher pubPath)
     }
 }
 
+void publish_KeyFrame_path(const ros::Publisher pubKeyFramePath, float * transform, float lidar_time){
+    msg_KeyFrame_body_pose.pose.position.x = transform[3];
+    msg_KeyFrame_body_pose.pose.position.y = transform[4];
+    msg_KeyFrame_body_pose.pose.position.z = transform[5];
+    Eigen::AngleAxisd roll_rotation(transform[0], Eigen::Vector3d::UnitX());
+    Eigen::AngleAxisd pitch_rotation(transform[1], Eigen::Vector3d::UnitY());
+    Eigen::AngleAxisd yaw_rotation(transform[2], Eigen::Vector3d::UnitZ());
+    Eigen::Quaterniond temp_q = roll_rotation * pitch_rotation * yaw_rotation;
+    msg_KeyFrame_body_pose.pose.orientation.x = temp_q.coeffs()[0];
+    msg_KeyFrame_body_pose.pose.orientation.y = temp_q.coeffs()[1];
+    msg_KeyFrame_body_pose.pose.orientation.z = temp_q.coeffs()[2];
+    msg_KeyFrame_body_pose.pose.orientation.w = temp_q.coeffs()[3];
+
+    msg_KeyFrame_body_pose.header.stamp = ros::Time().fromSec(lidar_time);
+    msg_KeyFrame_body_pose.header.frame_id = "camera_init";
+
+    KeyFrame_path.poses.push_back(msg_KeyFrame_body_pose);
+    pubKeyFramePath.publish(KeyFrame_path);
+}
+
+// 遍历iKD tree，并且对每个点做一个变换
+void traverseKDTree_and_transform(KD_TREE<PointType>::KD_TREE_NODE* node) {
+    if (node == nullptr) {
+        return;
+    }
+
+    // 遍历左子树
+    traverseKDTree_and_transform(node->left_son_ptr);
+
+    // 处理当前节点的point数据
+    PointType currentPoint = node->point;
+    // 在这里可以对每个点进行需要的操作(变换)
+    Eigen::Vector3f position(currentPoint.x, currentPoint.y, currentPoint.z);
+    Eigen::Vector3f transformedPosition = resultTransform * position;
+    node->point.x = transformedPosition.x();
+    node->point.y = transformedPosition.y();
+    node->point.z = transformedPosition.z();
+    // 在这里可以对每个点进行需要的操作(变换)
+
+    // 遍历右子树
+    traverseKDTree_and_transform(node->right_son_ptr);
+}
+
+
 // 从状态量中获得关键帧的位置和姿态
 void get_pose6D(state_ikfom state_input, float *transform_output){
     Eigen::Vector3d rpy = state_input.rot.unit_quaternion().toRotationMatrix().eulerAngles(0, 1, 2);
@@ -587,6 +635,9 @@ int main(int argc, char** argv)
     path.header.stamp    = ros::Time::now();
     path.header.frame_id ="camera_init";
 
+    KeyFrame_path.header.stamp = ros::Time::now();
+    KeyFrame_path.header.frame_id = "camera_init";
+
     /*** ROS subscribe initialization ***/
     ros::Subscriber sub_pcl = p_pre->lidar_type == AVIA ? \
         nh.subscribe(lid_topic, 200000, livox_pcl_cbk) : \
@@ -598,8 +649,9 @@ int main(int argc, char** argv)
     ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>("/Laser_map", 100000);
     ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> ("/Odometry", 100000);
     ros::Publisher pubPath          = nh.advertise<nav_msgs::Path> ("/path", 100000);
-    ros::Publisher pubLaserKeyFrameGlobal = nh.advertise<nav_msgs::Odometry> ("/KeyFrame/odometry", 1); // 发布可视化
-    ros::Publisher pubLoopConstraintEdge = nh.advertise<visualization_msgs::MarkerArray>("/KeyFrame/loop_closure_constraints", 1); // 回环边可视化
+    ros::Publisher pubLaserKeyFrameGlobal = nh.advertise<nav_msgs::Odometry> ("/KeyFrame/odometry", 100); // 发布可视化
+    ros::Publisher pubLoopConstraintEdge  = nh.advertise<visualization_msgs::MarkerArray>("/KeyFrame/loop_closure_constraints", 100); // 回环边可视化
+    ros::Publisher pubKeyFramePath        = nh.advertise<nav_msgs::Path> ("/KeyFrame/KeyFramepath", 100); // 关键帧位姿可视化
 
     downSizeFilterSurf.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min);
     downSizeFilterMap.setLeafSize(filter_size_map_min, filter_size_map_min, filter_size_map_min);
@@ -701,28 +753,59 @@ int main(int argc, char** argv)
                 loop_opt.optimization();
                 loop_opt.gtsamClear();
                 // 回环优化后对姿态和局部地图进行重新矫正
-                // loop_opt.correctPoses();
+                loop_opt.correctPoses();
                 
                 // 然后重新发布一下整体的姿态，并且调整x状态量，以便进行之后的滤波
                 
                 loop_opt.getCurrpose(transformTobeMapped_optimized); // 得到优化后的姿态
 
+                // 打印出来看一下（并没有进行优化）
+                // std::cout << "the transformTobeMapped is : " ;
+                // for (int j = 0; j < 6; j++){
+                //     std::cout << transformTobeMapped[j] << "  ";
+                // }
+                // std::cout << std::endl;
+                // std::cout << "the transform_optimized is : " ;
+                // for (int j = 0; j < 6; j++){
+                //     std::cout << transformTobeMapped_optimized[j] << "  ";
+                // }
+                // std::cout << std::endl;
+
                 // 发布关键帧进行可视化
                 loop_opt.publish_KeyFrame(pubLaserKeyFrameGlobal, Measures.lidar_end_time, "camera_init");
-            }
-            // 先修改当前状态
-            // Eigen::AngleAxisd roll_rotation(transformTobeMapped_optimized[0], Eigen::Vector3d::UnitX());
-            // Eigen::AngleAxisd pitch_rotation(transformTobeMapped_optimized[1], Eigen::Vector3d::UnitY());
-            // Eigen::AngleAxisd yaw_rotation(transformTobeMapped_optimized[2], Eigen::Vector3d::UnitZ());
-            // Eigen::Quaterniond temp_q = yaw_rotation * pitch_rotation * roll_rotation;
-            // state_point.rot.setQuaternion(temp_q);
-            // state_point.pos.x() = transformTobeMapped_optimized[3];
-            // state_point.pos.y() = transformTobeMapped_optimized[4];
-            // state_point.pos.z() = transformTobeMapped_optimized[5];
-            // kf.change_x(state_point); // 应该是基本没有变化（线进行可视化看，是不是进行了回环优化）
 
+                // 关键帧轨迹可视化
+                if(loop_opt.transformTobeMapped_update_flag_){ // 进行了回环更新了，需要重新发布一下状态进行可视化
+                    loop_opt.transformTobeMapped_update_flag_ = false;
+                    KeyFrame_path.poses.clear();
+                    for(size_t i = 0; i < loop_opt.cloudKeyPoses3D_->points.size(); i++){
+                        publish_KeyFrame_path(pubKeyFramePath, loop_opt.transformTobeMapped_vector_[i], loop_opt.cloudKeyPoses3D_->points[i].normal_x);
+                    }
+                    // 先修改当前状态（需要修改当前局部地图的每个点的位置，只在关键帧处进行矫正）
+                    Eigen::AngleAxisd roll_rotation(transformTobeMapped_optimized[0], Eigen::Vector3d::UnitX());
+                    Eigen::AngleAxisd pitch_rotation(transformTobeMapped_optimized[1], Eigen::Vector3d::UnitY());
+                    Eigen::AngleAxisd yaw_rotation(transformTobeMapped_optimized[2], Eigen::Vector3d::UnitZ());
+                    Eigen::Quaterniond temp_q = roll_rotation * pitch_rotation * yaw_rotation;
+                    state_point.rot.setQuaternion(temp_q);
+                    state_point.pos.x() = transformTobeMapped_optimized[3];
+                    state_point.pos.y() = transformTobeMapped_optimized[4];
+                    state_point.pos.z() = transformTobeMapped_optimized[5];
+                    kf.change_x(state_point); // 应该是基本没有变化（线进行可视化看，是不是进行了回环优化）
 
-            if(loop_opt.transformTobeMapped_update_flag_){ // 进行了回环更新了，需要重新发布一下状态进行可视化
+                    // 这里需要对ikd树的每个点进行变换（如何遍历iKD树的每个点，用GPT来写），得到变换矩阵
+                    Eigen::Affine3f transformTobeMapped_Affine3f =  loop_opt.trans2Affine3f(transformTobeMapped);
+                    Eigen::Affine3f transformTobeMapped_optimized_Affine3f =  loop_opt.trans2Affine3f(transformTobeMapped_optimized);
+                    // 计算两个变换之间的变换（从旧到新的变换）
+                    resultTransform = transformTobeMapped_optimized_Affine3f.inverse() * transformTobeMapped_Affine3f;
+                    traverseKDTree_and_transform(ikdtree.Root_Node);
+                    std::cout << "ikdtree.size is :" << ikdtree.size() << std::endl;
+                    
+                    // 然后对当前帧的所有点进行变换
+                    // map_incremental在这个函数中，会用到state_point的状态进行变换，所以应该可以不同手动进行变换
+
+                } else { // 这里没有进行更新，就直接更新关键帧的姿态就行
+                    publish_KeyFrame_path(pubKeyFramePath, transformTobeMapped_optimized, Measures.lidar_end_time);
+                }
                 
             }
 

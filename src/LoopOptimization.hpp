@@ -520,25 +520,25 @@ pcl::PointCloud<PointType>::Ptr LoopOptimization::transformPointCloud(pcl::Point
 // 还有对局部地图进行变换（在检测到回环后进行）
 void LoopOptimization::correctPoses(){
     if(!aLoopIsClosed_){ // 没有回环只得到最近一帧的位置和姿态
-        gtsam::Pose3 latestEstimate;
-        isamCurrentEstimate_ = isam_->calculateEstimate();
-        latestEstimate = isamCurrentEstimate_.at<gtsam::Pose3>(isamCurrentEstimate_.size()-1); // 最新一帧
-        // 添加新的优化后的位置
-        float* array = new float[6];  // 使用 new 运算符在堆区分配内存(注意内存的管理)
-        array[0] = latestEstimate.rotation().roll();
-        array[1] = latestEstimate.rotation().pitch();
-        array[2] = latestEstimate.rotation().yaw();
-        array[3] = latestEstimate.translation().x();
-        array[4] = latestEstimate.translation().y();
-        array[5] = latestEstimate.translation().z();
-        transformTobeMapped_vector_.push_back(array); // 这样的数据保存有问题
-        PointType pose3D;
-        pose3D.x = array[3];
-        pose3D.y = array[4];
-        pose3D.z = array[5];
-        pose3D.intensity = float(KeyFrameNumber); // 记录当前点对应的帧的id
-        pose3D.normal_x = float(timeLaserInfoCur_); // 用normal_x记录时间
-        cloudKeyPoses3D_->points.push_back(pose3D);
+        // gtsam::Pose3 latestEstimate;
+        // isamCurrentEstimate_ = isam_->calculateEstimate();
+        // latestEstimate = isamCurrentEstimate_.at<gtsam::Pose3>(isamCurrentEstimate_.size()-1); // 最新一帧
+        // // 添加新的优化后的位置
+        // float* array = new float[6];  // 使用 new 运算符在堆区分配内存(注意内存的管理)
+        // array[0] = latestEstimate.rotation().roll();
+        // array[1] = latestEstimate.rotation().pitch();
+        // array[2] = latestEstimate.rotation().yaw();
+        // array[3] = latestEstimate.translation().x();
+        // array[4] = latestEstimate.translation().y();
+        // array[5] = latestEstimate.translation().z();
+        // transformTobeMapped_vector_.push_back(array); // 这样的数据保存有问题
+        // PointType pose3D;
+        // pose3D.x = array[3];
+        // pose3D.y = array[4];
+        // pose3D.z = array[5];
+        // pose3D.intensity = float(KeyFrameNumber); // 记录当前点对应的帧的id
+        // pose3D.normal_x = float(timeLaserInfoCur_); // 用normal_x记录时间
+        // cloudKeyPoses3D_->points.push_back(pose3D);
         // 这里暂时就不对协方差进行更新了
     } else { // 对所有位置都进行修改
         aLoopIsClosed_ = false;
@@ -549,6 +549,7 @@ void LoopOptimization::correctPoses(){
         // 清空里程计轨迹
 
         // 更新因子图中所有变量节点的位姿，也就是所有历史关键帧的位姿
+        isamCurrentEstimate_ = isam_->calculateEstimate();
         int numPoses = isamCurrentEstimate_.size();
         for (int i = 0; i < numPoses; ++i) {
             cloudKeyPoses3D_->points[i].x = isamCurrentEstimate_.at<gtsam::Pose3>(i).translation().x();
@@ -565,6 +566,7 @@ void LoopOptimization::correctPoses(){
             // 更新里程计轨迹(尽量不要在里面进行显示，发送到主函数让他显示)
             // updatePath(transformTobeMapped_vector_[i]);
         }
+        std::cout << "回环优化后的位姿态重置完毕！！" << std::endl;
         transformTobeMapped_update_flag_ = true; // 告诉外部程序，这里已经进行了更新了，需要重新发布一次整个的状态
     }
 }
