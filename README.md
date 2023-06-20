@@ -7,7 +7,7 @@
 4. 回环优化后对姿态和局部地图进行重新矫正（回环优化后，出现多线程数据冲突问题，参考LIO-SAM来解决问题）已解决
 5. 新发现一个bug，建图出现重影，有两个，但是暂时找不到问题所在。（2023年6月20号）
 
-
+有任何问题，都可以提出，欢迎交流！
 
 ## Simplified Implementation of FAST_LIO
 
@@ -43,7 +43,7 @@ Follow [livox_ros_driver Installation](https://github.com/Livox-SDK/livox_ros_dr
 Source：Add the line ``` source $Licox_ros_driver_dir$/devel/setup.bash ``` to the end of file ``` ~/.bashrc ```, where ``` $Licox_ros_driver_dir$ ``` is the directory of the livox ros driver workspace (should be the ``` ws_livox ``` directory if you completely followed the livox official document).
 
 ### 1.4. **Sophus**
-We use the old version of Sophus
+We use the old version of Sophus，这个问题已经解决，可以使用最新的版本，并且跳过这个部分
 ```
 git clone https://github.com/strasdat/Sophus.git
 cd Sophus
@@ -54,6 +54,9 @@ cmake ../ -DUSE_BASIC_LOGGING=ON
 make
 sudo make install
 ```
+### 1.5. **GTSAM**
+
+你需要自行搜索，并且安装gtsam优化库。
 
 
 ## 2. Build S-FAST_LIO
